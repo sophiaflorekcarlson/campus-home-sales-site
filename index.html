@@ -59,15 +59,17 @@
       overflow-x: auto;
       border: 1px solid var(--line);
       border-radius: 0.5rem;
+      width: fit-content;
+      max-width: 100%;
     }
 
     table {
-      width: 100%;
+      width: auto;
       border-collapse: collapse;
       text-align: left;
     }
 
-    th, td { padding: 0.9rem 1rem; }
+    th, td { padding: 0.9rem 0.8rem; }
     th {
       color: var(--muted);
       background: var(--surface);
@@ -77,8 +79,39 @@
     }
     td { border-top: 1px solid var(--line); }
     td:last-child, th:last-child { text-align: right; }
-    .status { color: var(--muted); }
-    .error { color: #a12626; }
+    .status:not(.error) {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .status.error { color: #a12626; }
+
+    .price-cell {
+      min-width: 13rem;
+    }
+
+    .price-content {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.75rem;
+    }
+
+    .price-bar {
+      display: block;
+      width: var(--bar-width);
+      height: 0.25rem;
+      min-width: 0.25rem;
+      border-radius: 999px;
+      background: var(--accent);
+      opacity: 0.65;
+    }
 
     footer {
       margin-top: 2.5rem;
@@ -97,9 +130,10 @@
       <strong>Price rule:</strong> Sales under $10,000 are left out before calculating each median.
     </p>
 
+    <p class="status" id="status" aria-live="polite"></p>
+
     <div class="table-wrap">
       <table>
-        <caption class="status" id="status">Loading sale data…</caption>
         <thead>
           <tr>
             <th scope="col">City</th>
@@ -175,29 +209,48 @@
       const rows = parseCsv(await response.text());
       const headers = rows.shift();
       const cityIndex = headers.indexOf("city");
+      const stateIndex = headers.indexOf("state");
       const priceIndex = headers.indexOf("sale_price");
       const pricesByCity = new Map();
 
       rows.forEach((row) => {
         const price = Number(row[priceIndex]);
-        if (row[cityIndex] && Number.isFinite(price) && price >= 10000) {
-          if (!pricesByCity.has(row[cityIndex])) pricesByCity.set(row[cityIndex], []);
-          pricesByCity.get(row[cityIndex]).push(price);
+        if (row[cityIndex] && row[stateIndex] && Number.isFinite(price) && price >= 10000) {
+          const key = `${row[cityIndex]}|${row[stateIndex]}`;
+          if (!pricesByCity.has(key)) {
+            pricesByCity.set(key, { city: row[cityIndex], state: row[stateIndex], prices: [] });
+          }
+          pricesByCity.get(key).prices.push(price);
         }
       });
 
-      const cities = [...pricesByCity].sort(([cityA], [cityB]) => cityA.localeCompare(cityB));
-      cities.forEach(([city, prices]) => {
+      const cities = [...pricesByCity.values()].sort((cityA, cityB) =>
+        cityA.city.localeCompare(cityB.city) || cityA.state.localeCompare(cityB.state)
+      );
+      const cityMedians = cities.map(({ prices }) => {
         prices.sort((a, b) => a - b);
+        return median(prices);
+      });
+      const maxMedian = Math.max(...cityMedians);
+
+      cities.forEach(({ city, state, prices }) => {
+        prices.sort((a, b) => a - b);
+        const cityMedian = median(prices);
+        const barWidth = `${Math.max(4, (cityMedian / maxMedian) * 100)}%`;
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <th scope="row">${city}</th>
+          <th scope="row">${city}, ${state}</th>
           <td>${prices.length.toLocaleString("en-US")}</td>
-          <td>${currency.format(median(prices))}</td>
+          <td class="price-cell">
+            <span class="price-content">
+              <span class="price-bar" style="--bar-width: ${barWidth}"></span>
+              <span>${currency.format(cityMedian)}</span>
+            </span>
+          </td>
         `;
         results.appendChild(tr);
       });
-      status.textContent = `${cities.length} cities · computed from the CSV`;
+      status.textContent = "";
     }
 
     renderPrices().catch((error) => {
